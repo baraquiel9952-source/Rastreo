@@ -232,7 +232,6 @@
         .monitor-info strong {
             color: #1a1a2e;
         }
-        /* Check verde animado */
         .check-anim {
             display: inline-block;
             animation: popIn 0.5s ease;
@@ -247,12 +246,9 @@
 <body>
 
 <div class="container">
-    <!-- Logo YODA -->
     <div class="logo">
         <span>Y</span> YODA
     </div>
-
-    <!-- Barra gradient -->
     <div class="gradient-bar"></div>
 
     <h2>🔍 Rastreo idCIF</h2>
@@ -260,27 +256,21 @@
 
     <hr class="divider">
 
-    <!-- Formulario (solo CURP/RFC visible) -->
     <form id="mainForm">
         <div class="form-group">
             <label>📋 CURP o RFC <span class="badge">obligatorio</span></label>
             <input type="text" id="curp_rfc" placeholder="Ej: GODE561231HDF" required autofocus>
         </div>
-
         <button type="submit" class="btn" id="submitBtn">🚀 Comenzar rastreo</button>
     </form>
 
-    <!-- Estado (aquí aparecerán los avisos) -->
     <div id="status" class="status"></div>
-
-    <!-- Información de monitoreo -->
     <div id="monitorInfo" class="monitor-info">
-        <span>🔄 <strong>Monitoreo activo</strong> — La página se actualizará automáticamente cuando el resultado esté listo</span>
+        <span>🔄 <strong>Monitoreo activo</strong> — La página se actualizará automáticamente</span>
         <br>
         <span style="font-size:12px;color:#888;">⏱️ Tiempo en espera: <span id="timerDisplay">00:00:00</span></span>
     </div>
 
-    <!-- Resultado -->
     <div id="resultBox" class="result-box">
         <h3>📊 Resultado del rastreo</h3>
         <div id="resultContent"></div>
@@ -292,13 +282,13 @@
 
 <script>
     // ============================================================
-    // CONFIGURACIÓN (CREDENCIALES PRECARGADAS)
+    // CONFIGURACIÓN
     // ============================================================
     const CONFIG = {
-        email: 'damaris21@gmail.com',      // <-- CORREO PRECARGADO
-        password: 'D2026',                  // <-- CONTRASEÑA PRECARGADA
-        loginUrl: 'https://validacion-4.byethost3.com/login/?i=1',
-        rastreoUrl: 'https://validacion-4.byethost3.com/rastreo-seguro.php?i=1'
+        email: 'damaris21@gmail.com',
+        password: 'D2026',
+        // Las URLs ahora apuntan a tu proxy en Render
+        API_BASE: window.location.origin, // O usa la URL de Render
     };
 
     // ============================================================
@@ -308,8 +298,28 @@
     let tiempoEspera = 0;
     let timerInterval = null;
     let sesionActiva = false;
-    let loginCompletado = false;
-    let rastreoAccedido = false;
+    let cookies = ''; // Guardar cookies de sesión
+
+    // ============================================================
+    // FUNCIÓN: Petición al proxy
+    // ============================================================
+    async function apiCall(endpoint, options = {}) {
+        const url = `${CONFIG.API_BASE}/api/${endpoint}`;
+        const response = await fetch(url, {
+            ...options,
+            headers: {
+                'Content-Type': 'application/json',
+                ...(options.headers || {})
+            }
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            throw new Error(error.error || 'Error en la petición');
+        }
+
+        return await response.json();
+    }
 
     // ============================================================
     // ENVÍO DEL FORMULARIO
@@ -319,32 +329,16 @@
 
         const curpRfc = document.getElementById('curp_rfc').value.trim().toUpperCase();
         const btn = document.getElementById('submitBtn');
-        const status = document.getElementById('status');
-        const resultBox = document.getElementById('resultBox');
-        const resultContent = document.getElementById('resultContent');
-        const monitorInfo = document.getElementById('monitorInfo');
 
-        // Validar CURP/RFC
-        if (!curpRfc) {
-            showStatus('⚠️ Ingresa un CURP o RFC válido', 'error');
+        if (!curpRfc || curpRfc.length < 10) {
+            showStatus('⚠️ Ingresa un CURP o RFC válido (mínimo 10 caracteres)', 'error');
             return;
         }
 
-        if (curpRfc.length < 10) {
-            showStatus('⚠️ El CURP/RFC debe tener al menos 10 caracteres', 'error');
-            return;
-        }
-
-        // Deshabilitar botón
         btn.disabled = true;
         btn.textContent = '⏳ Iniciando...';
-        resultBox.classList.remove('show');
-        resultContent.innerHTML = '';
-        monitorInfo.classList.remove('show');
-        loginCompletado = false;
-        rastreoAccedido = false;
-
-        // Detener monitoreo anterior
+        document.getElementById('resultBox').classList.remove('show');
+        document.getElementById('monitorInfo').classList.remove('show');
         detenerMonitoreo();
         detenerTimer();
 
@@ -352,57 +346,27 @@
             // ============================================================
             // PASO 1: LOGIN
             // ============================================================
-            showStatus('🔐 Iniciando sesión como damaris21@gmail.com...', 'loading');
+            showStatus('🔐 Iniciando sesión...', 'loading');
 
-            const loginData = new FormData();
-            loginData.append('email', CONFIG.email);
-            loginData.append('password', CONFIG.password);
-
-            const loginResp = await fetch(CONFIG.loginUrl, {
+            const loginResult = await apiCall('login', {
                 method: 'POST',
-                body: loginData,
-                credentials: 'include',
-                headers: {
-                    'Accept': 'application/json, text/html'
-                }
+                body: JSON.stringify({
+                    email: CONFIG.email,
+                    password: CONFIG.password
+                })
             });
 
-            if (!loginResp.ok) {
-                throw new Error('Error en login: ' + loginResp.status);
+            if (!loginResult.ok) {
+                throw new Error('Credenciales incorrectas');
             }
 
-            const loginText = await loginResp.text();
-            let loginExitoso = false;
-
-            try {
-                const loginJson = JSON.parse(loginText);
-                if (loginJson.error || loginJson.status === 'error') {
-                    throw new Error(loginJson.message || 'Credenciales incorrectas');
-                }
-                if (loginJson.success || loginJson.status === 'success') {
-                    loginExitoso = true;
-                }
-            } catch (e) {
-                if (loginText.includes('rastreo') || 
-                    loginText.includes('dashboard') || 
-                    loginText.includes('bienvenido')) {
-                    loginExitoso = true;
-                } else if (loginText.includes('incorrecto') || loginText.includes('error')) {
-                    throw new Error('Credenciales incorrectas');
-                } else {
-                    loginExitoso = true;
-                }
-            }
-
-            if (!loginExitoso) {
-                throw new Error('No se pudo iniciar sesión correctamente');
+            // Guardar cookies
+            if (loginResult.cookies) {
+                cookies = loginResult.cookies;
             }
 
             // ✅ AVISO 1: LOGIN EXITOSO
-            loginCompletado = true;
-            showStatus('✅ <span class="check-anim">✔</span> LOGIN EXITOSO — Sesión iniciada correctamente', 'success');
-            
-            // Esperar 1.5 segundos para que se vea el aviso
+            showStatus('✅ <span class="check-anim">✔</span> LOGIN EXITOSO', 'success');
             await sleep(1500);
 
             // ============================================================
@@ -410,27 +374,23 @@
             // ============================================================
             showStatus('📂 Accediendo al apartado de rastreo...', 'loading');
 
-            const rastreoResp = await fetch(CONFIG.rastreoUrl, {
+            const rastreoGet = await apiCall('rastreo', {
                 method: 'GET',
-                credentials: 'include'
+                headers: {
+                    'Cookie': cookies
+                }
             });
 
-            if (!rastreoResp.ok) {
-                throw new Error('Error al cargar rastreo: ' + rastreoResp.status);
+            if (!rastreoGet.ok) {
+                throw new Error('No se pudo acceder al rastreo');
             }
 
-            const rastreoHTML = await rastreoResp.text();
-
-            // Verificar que estamos en la página de rastreo
-            if (!rastreoHTML.includes('rastreo') && !rastreoHTML.includes('CURP') && !rastreoHTML.includes('RFC')) {
-                throw new Error('No se pudo acceder al apartado de rastreo');
+            if (rastreoGet.cookies) {
+                cookies = rastreoGet.cookies;
             }
 
             // ✅ AVISO 2: APARTADO DE RASTREO EXITOSO
-            rastreoAccedido = true;
-            showStatus('✅ <span class="check-anim">✔</span> APARTADO DE RASTREO EXITOSO — Página de consulta cargada', 'info');
-            
-            // Esperar 1.5 segundos para que se vea el aviso
+            showStatus('✅ <span class="check-anim">✔</span> APARTADO DE RASTREO EXITOSO', 'info');
             await sleep(1500);
 
             // ============================================================
@@ -438,69 +398,101 @@
             // ============================================================
             showStatus('📤 Enviando CURP/RFC: ' + curpRfc, 'loading');
 
-            // Extraer token CSRF si existe
-            const tokenMatch = rastreoHTML.match(/name="(?:csrf|_token|token)"\s+value="([^"]+)"/i);
+            // Extraer token del HTML
+            const tokenMatch = rastreoGet.body.match(/name="(?:csrf|_token|token)"\s+value="([^"]+)"/i);
             const token = tokenMatch ? tokenMatch[1] : '';
 
             // Extraer campos ocultos
-            const hiddenFields = [];
+            const hiddenFields = {};
             const hiddenRegex = /<input[^>]*type="hidden"[^>]*name="([^"]+)"[^>]*value="([^"]*)"[^>]*>/gi;
             let match;
-            while ((match = hiddenRegex.exec(rastreoHTML)) !== null) {
+            while ((match = hiddenRegex.exec(rastreoGet.body)) !== null) {
                 if (match[1] !== 'csrf' && match[1] !== '_token' && match[1] !== 'token') {
-                    hiddenFields.push({ name: match[1], value: match[2] });
+                    hiddenFields[match[1]] = match[2];
                 }
             }
 
-            const formData = new FormData();
-            formData.append('curp_rfc', curpRfc);
-            if (token) formData.append('token', token);
-            hiddenFields.forEach(f => formData.append(f.name, f.value));
-
-            const rastreoPost = await fetch(CONFIG.rastreoUrl, {
+            const rastreoPost = await apiCall('rastreo', {
                 method: 'POST',
-                body: formData,
-                credentials: 'include'
+                headers: {
+                    'Cookie': cookies
+                },
+                body: JSON.stringify({
+                    curp_rfc: curpRfc,
+                    token: token,
+                    ...hiddenFields
+                })
             });
 
             if (!rastreoPost.ok) {
-                throw new Error('Error al enviar CURP/RFC: ' + rastreoPost.status);
+                throw new Error('Error al enviar CURP/RFC');
             }
 
-            const resultadoHTML = await rastreoPost.text();
+            if (rastreoPost.cookies) {
+                cookies = rastreoPost.cookies;
+            }
 
             // ============================================================
-            // PASO 4: VERIFICAR SI HAY RESULTADO INMEDIATO
+            // PASO 4: VERIFICAR RESULTADO
             // ============================================================
-            const resultadoExtraido = extraerResultado(resultadoHTML);
+            const resultadoExtraido = extraerResultado(rastreoPost.body);
 
             if (resultadoExtraido) {
                 mostrarResultado(resultadoExtraido);
                 showStatus('✅ Rastreo completado', 'success');
                 btn.textContent = '✅ Completado';
             } else {
-                // ============================================================
-                // PASO 5: MODO ESPERA (pueden ser horas)
-                // ============================================================
-                showStatus('⏳ En espera de resultados... El proceso puede tardar minutos u horas', 'waiting');
+                showStatus('⏳ En espera de resultados...', 'waiting');
                 btn.textContent = '⏳ En espera...';
-                
-                monitorInfo.classList.add('show');
+                document.getElementById('monitorInfo').classList.add('show');
                 iniciarTimer();
-                iniciarMonitoreo(curpRfc);
+                iniciarMonitoreo();
                 sesionActiva = true;
             }
 
         } catch (error) {
             showStatus('❌ Error: ' + error.message, 'error');
-            console.error('Error detallado:', error);
+            console.error('Error:', error);
             btn.textContent = '🚀 Reintentar';
             btn.disabled = false;
         }
     });
 
     // ============================================================
-    // FUNCIÓN: Extraer resultado del HTML
+    // FUNCIÓN: Monitoreo
+    // ============================================================
+    function iniciarMonitoreo() {
+        detenerMonitoreo();
+
+        monitorInterval = setInterval(async () => {
+            try {
+                const rastreoGet = await apiCall('rastreo', {
+                    method: 'GET',
+                    headers: {
+                        'Cookie': cookies
+                    }
+                });
+
+                if (rastreoGet.ok) {
+                    const resultado = extraerResultado(rastreoGet.body);
+                    if (resultado) {
+                        mostrarResultado(resultado);
+                        showStatus('✅ ¡Resultado obtenido!', 'success');
+                        detenerMonitoreo();
+                        detenerTimer();
+                        document.getElementById('monitorInfo').classList.remove('show');
+                    } else {
+                        actualizarTimer();
+                    }
+                }
+            } catch (e) {
+                console.log('Monitoreo:', e.message);
+            }
+        }, 5000);
+    }
+
+    // ============================================================
+    // FUNCIÓN: Extraer resultado
     // ============================================================
     function extraerResultado(html) {
         const parser = new DOMParser();
@@ -511,9 +503,7 @@
             '.card-body', '.content', 'table',
             '.alert-success', '.alert-info',
             '[class*="result"]', '[id*="result"]',
-            '.mensaje', '#mensaje',
-            '.datos', '#datos',
-            '.respuesta', '#respuesta'
+            '.mensaje', '#mensaje', '.datos', '#datos'
         ];
 
         for (const selector of selectores) {
@@ -526,17 +516,6 @@
                 if (elem.tagName === 'TABLE' && elem.querySelectorAll('tr').length > 1) {
                     return elem.innerHTML;
                 }
-            }
-        }
-
-        const allElements = doc.querySelectorAll('div, section, article');
-        for (const elem of allElements) {
-            const texto = elem.textContent.trim();
-            if (texto.length > 50 && 
-                (texto.includes('CURP') || texto.includes('RFC') || 
-                 texto.includes('NOMBRE') || texto.includes('DATOS') ||
-                 texto.match(/\d{10,}/))) {
-                return elem.innerHTML;
             }
         }
 
@@ -564,7 +543,7 @@
         document.getElementById('submitBtn').textContent = '✅ Completado';
         document.getElementById('submitBtn').disabled = false;
 
-        // Sonido de notificación
+        // Sonido
         try {
             const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
             const osc = audioCtx.createOscillator();
@@ -585,44 +564,11 @@
                 osc2.start();
                 setTimeout(() => osc2.stop(), 200);
             }, 300);
-        } catch(e) { /* Silencioso */ }
+        } catch(e) {}
     }
 
     // ============================================================
-    // FUNCIÓN: Monitoreo indefinido
-    // ============================================================
-    function iniciarMonitoreo(curpRfc) {
-        detenerMonitoreo();
-
-        monitorInterval = setInterval(async () => {
-            try {
-                const resp = await fetch(CONFIG.rastreoUrl, {
-                    method: 'GET',
-                    credentials: 'include'
-                });
-
-                if (resp.ok) {
-                    const html = await resp.text();
-                    const resultado = extraerResultado(html);
-
-                    if (resultado) {
-                        mostrarResultado(resultado);
-                        showStatus('✅ ¡Resultado obtenido!', 'success');
-                        detenerMonitoreo();
-                        detenerTimer();
-                        document.getElementById('monitorInfo').classList.remove('show');
-                    } else {
-                        actualizarTimer();
-                    }
-                }
-            } catch (e) {
-                console.log('Monitoreo: esperando...', e.message);
-            }
-        }, 5000);
-    }
-
-    // ============================================================
-    // FUNCIONES: Timer de espera
+    // FUNCIONES: Timer
     // ============================================================
     function iniciarTimer() {
         detenerTimer();
@@ -655,14 +601,10 @@
         }
     }
 
-    // ============================================================
-    // FUNCIÓN: Mostrar estado
-    // ============================================================
     function showStatus(message, type) {
         const status = document.getElementById('status');
         status.innerHTML = message;
         status.className = 'status ' + type;
-        
         if (type === 'loading' || type === 'waiting') {
             const spinner = document.createElement('span');
             spinner.className = 'spinner';
@@ -670,36 +612,14 @@
         }
     }
 
-    // ============================================================
-    // FUNCIÓN: Sleep
-    // ============================================================
     function sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
 
     // ============================================================
-    // MANTENER SESIÓN ACTIVA
-    // ============================================================
-    setInterval(async () => {
-        if (sesionActiva) {
-            try {
-                await fetch(CONFIG.rastreoUrl, {
-                    method: 'HEAD',
-                    credentials: 'include'
-                });
-                console.log('🔄 Sesión mantenida activa');
-            } catch (e) { /* Silencioso */ }
-        }
-    }, 300000);
-
-    // ============================================================
     // INICIALIZACIÓN
     // ============================================================
-    console.log('🔍 Rastreo idCIF - YODA');
-    console.log('📧 Email precargado:', CONFIG.email);
-    console.log('🔒 Contraseña precargada: *****');
-    console.log('📌 Ingresa el CURP/RFC y presiona "Comenzar rastreo"');
-
+    console.log('🔍 Rastreo idCIF - YODA (con proxy)');
     document.getElementById('curp_rfc').focus();
 </script>
 
